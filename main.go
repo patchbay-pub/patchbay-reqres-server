@@ -1,59 +1,130 @@
 package main
 
 import (
+        "fmt"
         "log"
         "net/http"
         "io"
         "sync"
+        "math/rand"
+        "time"
+        "strings"
 )
 
-type Stream struct {
-        reader io.ReadCloser
-        done chan struct{}
+const RequestPrefix = "Patchbay-Request-"
+const ResponsePrefix = "Patchbay-Response-"
+
+type PatchedRequest struct {
+        httpRequest *http.Request
+        responseChan chan PatchedReponse
+}
+
+type PatchedReponse struct {
+        //body io.ReadCloser
+        serverRequest *http.Request
+        doneSignal chan struct{}
 }
 
 func main() {
 
         log.Println("Starting up")
+        rand.Seed(time.Now().Unix())
 
-	channels := make(map[string]chan Stream)
+	channels := make(map[string]chan PatchedRequest)
 	mutex := &sync.Mutex{}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 
-                mutex.Lock()
+		query := r.URL.Query()
 
+                isServer := query.Get("server") == "true"
+
+                mutex.Lock()
                 _, ok := channels[r.URL.Path]
                 if !ok {
-                        channels[r.URL.Path] = make(chan Stream)
+                        channels[r.URL.Path] = make(chan PatchedRequest)
                 }
-
                 channel := channels[r.URL.Path]
-
                 mutex.Unlock()
 
-                log.Println(channel)
-                if r.Method == "GET" {
+                if isServer {
 
                         select {
-                        case stream := <-channel:
-                                io.Copy(w, stream.reader)
-                                close(stream.done)
-                        case <-r.Context().Done():
-                                log.Println("consumer canceled")
-                        }
-                } else if r.Method == "POST" {
+                        case request := <-channel:
+                                log.Println("request received")
 
-                        doneSignal := make(chan struct{})
-                        stream := Stream{reader: r.Body, done: doneSignal}
+
+                                for k, vList := range request.httpRequest.Header {
+                                        for _, v := range vList {
+                                                w.Header().Add(RequestPrefix + k, v)
+                                        }
+                                }
+
+                                doubleClutch := query.Get("doubleclutch")
+
+                                // not all HTTP clients can read the response headers before sending the request body.
+                                // "Double clutching" splits the transaction across 2 requests, providing the server with
+                                // a random channel for the second request, and connecting that to the original client
+                                if doubleClutch == "true" {
+                                        log.Println("doubleclutch")
+                                        // TODO: keep generating until we're sure we have an unused channel. Extremely
+                                        // unlikely but you never know.
+                                        randomChannelId := genRandomChannelId()
+                                        log.Println(randomChannelId)
+                                        w.Header().Add("Patchbay-Doubleclutch-Channel", randomChannelId)
+                                        curlCmd := fmt.Sprintf("curl localhost:9001%s?server=true -d \"YOLO\"\n", randomChannelId)
+                                        w.Header().Add("Patchbay-Doubleclutch-Curl-Cmd", curlCmd)
+
+                                        io.Copy(w, request.httpRequest.Body)
+
+                                        ch := make(chan PatchedRequest, 1)
+
+                                        mutex.Lock()
+                                        channels[randomChannelId] = ch
+                                        mutex.Unlock()
+
+                                        ch <- request
+                                } else {
+
+                                        io.Copy(w, request.httpRequest.Body)
+
+                                        doneSignal := make(chan struct{})
+                                        response := PatchedReponse{serverRequest: r, doneSignal: doneSignal}
+
+                                        request.responseChan <- response
+
+                                        <-doneSignal
+                                }
+                        case <-r.Context().Done():
+                                log.Println("server canceled")
+                        }
+                } else {
+
+                        responseChan := make(chan PatchedReponse)
+                        request := PatchedRequest{httpRequest: r, responseChan: responseChan}
+
                         select {
-                        case channel <- stream:
-                                log.Println("connected to consumer")
-                        case <-r.Context().Done():
-                                log.Println("producer canceled")
-                        }
+                        case channel <- request:
+                                log.Println("request sent")
 
-                        <-doneSignal
+                                response := <-responseChan
+
+                                for k, vList := range response.serverRequest.Header {
+                                        if strings.HasPrefix(k, ResponsePrefix) {
+                                                // strip the prefix
+                                                headerName := k[len(ResponsePrefix):]
+                                                for _, v := range vList {
+                                                        w.Header().Add(headerName, v)
+                                                }
+                                        }
+                                }
+
+                                io.Copy(w, response.serverRequest.Body)
+                                close(response.doneSignal)
+
+                        case <-r.Context().Done():
+                                log.Println("client canceled")
+                        }
                 }
         }
 
@@ -61,4 +132,14 @@ func main() {
         if err != nil {
                 log.Fatal(err)
         }
+}
+
+
+const channelChars string = "0123456789abcdefghijkmnpqrstuvwxyz";
+func genRandomChannelId() string {
+        channelId := ""
+        for i := 0; i < 32; i++ {
+                channelId += string(channelChars[rand.Intn(len(channelChars))])
+        }
+        return "/" + channelId
 }
