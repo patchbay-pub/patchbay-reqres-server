@@ -12,8 +12,8 @@ import (
         "strconv"
 )
 
-const RequestPrefix = "Patchbay-Request-"
-const ResponsePrefix = "Patchbay-Response-"
+const RequestPrefix = "Pb-Req-"
+const ResponsePrefix = "Pb-Res-"
 
 type PatchedRequest struct {
         httpRequest *http.Request
