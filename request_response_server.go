@@ -9,6 +9,8 @@ import (
         "sync"
         "strings"
         "strconv"
+        "mime"
+        "path"
 )
 
 const RequestPrefix = "Pb-Req-"
@@ -21,7 +23,7 @@ type PatchedRequest struct {
 
 type PatchedReponse struct {
         //body io.ReadCloser
-        serverRequest *http.Request
+        responderRequest *http.Request
         doneSignal chan struct{}
 }
 
@@ -106,10 +108,15 @@ func NewRequestResponseServer() *RequestResponseServer {
                                         ch <- request
                                 } else {
 
-                                        io.Copy(w, request.httpRequest.Body)
-
                                         doneSignal := make(chan struct{})
-                                        response := PatchedReponse{serverRequest: r, doneSignal: doneSignal}
+                                        response := PatchedReponse{responderRequest: r, doneSignal: doneSignal}
+
+                                        contentType := mime.TypeByExtension(path.Ext(r.URL.Path))
+                                        if contentType != "" {
+                                                response.responderRequest.Header.Set(ResponsePrefix + "Content-Type", contentType)
+                                        }
+
+                                        io.Copy(w, request.httpRequest.Body)
 
                                         request.responseChan <- response
 
@@ -131,7 +138,7 @@ func NewRequestResponseServer() *RequestResponseServer {
                                 response := <-responseChan
 
                                 var status int
-                                for k, vList := range response.serverRequest.Header {
+                                for k, vList := range response.responderRequest.Header {
                                         if strings.HasPrefix(k, ResponsePrefix) {
                                                 // strip the prefix
                                                 headerName := k[len(ResponsePrefix):]
@@ -154,10 +161,10 @@ func NewRequestResponseServer() *RequestResponseServer {
                                 go func() {
                                         <-r.Context().Done()
                                         fmt.Println("requester canceled after connection")
-                                        response.serverRequest.Body.Close()
+                                        response.responderRequest.Body.Close()
                                 }()
 
-                                io.Copy(w, response.serverRequest.Body)
+                                io.Copy(w, response.responderRequest.Body)
                                 close(response.doneSignal)
 
                         case <-r.Context().Done():
