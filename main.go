@@ -71,9 +71,9 @@ func main() {
                                         // TODO: keep generating until we're sure we have an unused channel. Extremely
                                         // unlikely but you never know.
                                         randomChannelId := genRandomChannelId()
-                                        w.Header().Add("Patchbay-Doubleclutch-Channel", randomChannelId)
+                                        w.Header().Add("Pb-Doubleclutch-Channel", randomChannelId)
                                         curlCmd := fmt.Sprintf("curl localhost:9001%s?server=true -d \"YOLO\"\n", randomChannelId)
-                                        w.Header().Add("Patchbay-Doubleclutch-Curl-Cmd", curlCmd)
+                                        w.Header().Add("Pb-Doubleclutch-Curl-Cmd", curlCmd)
 
                                         io.Copy(w, request.httpRequest.Body)
 
@@ -118,7 +118,7 @@ func main() {
                                                 for _, v := range vList {
                                                         w.Header().Add(headerName, v)
                                                 }
-                                        } else if strings.HasPrefix(k, "Patchbay-Status") {
+                                        } else if strings.HasPrefix(k, "Pb-Status") {
                                                 var err error
                                                 status, err = strconv.Atoi(vList[0])
                                                 if err != nil {
