@@ -38,7 +38,7 @@ func main() {
 
 		query := r.URL.Query()
 
-                isServer := query.Get("server") == "true"
+                isResponder := query.Get("responder") == "true"
 
                 mutex.Lock()
                 _, ok := channels[r.URL.Path]
@@ -48,9 +48,9 @@ func main() {
                 channel := channels[r.URL.Path]
                 mutex.Unlock()
 
-                if isServer {
+                if isResponder {
 
-                        log.Println("server connection")
+                        log.Println("responder connection")
 
                         select {
                         case request := <-channel:
@@ -65,14 +65,15 @@ func main() {
                                 doubleClutch := query.Get("doubleclutch")
 
                                 // not all HTTP clients can read the response headers before sending the request body.
-                                // "Double clutching" splits the transaction across 2 requests, providing the server with
-                                // a random channel for the second request, and connecting that to the original client
+                                // "Double clutching" splits the transaction across 2 requests, providing the responder 
+                                // with a random channel for the second request, and connecting that to the original
+                                // requester 
                                 if doubleClutch == "true" {
                                         // TODO: keep generating until we're sure we have an unused channel. Extremely
                                         // unlikely but you never know.
                                         randomChannelId := genRandomChannelId()
                                         w.Header().Add("Pb-Doubleclutch-Channel", randomChannelId)
-                                        curlCmd := fmt.Sprintf("curl localhost:9001%s?server=true -d \"YOLO\"\n", randomChannelId)
+                                        curlCmd := fmt.Sprintf("curl localhost:9001%s?responder=true -d \"Hi there\"\n", randomChannelId)
                                         w.Header().Add("Pb-Doubleclutch-Curl-Cmd", curlCmd)
 
                                         io.Copy(w, request.httpRequest.Body)
@@ -96,11 +97,11 @@ func main() {
                                         <-doneSignal
                                 }
                         case <-r.Context().Done():
-                                log.Println("server canceled")
+                                log.Println("responder canceled")
                         }
                 } else {
 
-                        log.Println("client connection")
+                        log.Println("requester connection")
 
                         responseChan := make(chan PatchedReponse)
                         request := PatchedRequest{httpRequest: r, responseChan: responseChan}
@@ -133,7 +134,7 @@ func main() {
 
                                 go func() {
                                         <-r.Context().Done()
-                                        fmt.Println("cancello")
+                                        fmt.Println("requester canceled after connection")
                                         response.serverRequest.Body.Close()
                                 }()
 
@@ -141,7 +142,7 @@ func main() {
                                 close(response.doneSignal)
 
                         case <-r.Context().Done():
-                                log.Println("client canceled")
+                                log.Println("requester canceled before connection")
                         }
                 }
         }
