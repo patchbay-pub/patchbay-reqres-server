@@ -9,6 +9,7 @@ import (
         "math/rand"
         "time"
         "strings"
+        "strconv"
 )
 
 const RequestPrefix = "Patchbay-Request-"
@@ -49,9 +50,10 @@ func main() {
 
                 if isServer {
 
+                        log.Println("server connection")
+
                         select {
                         case request := <-channel:
-                                log.Println("request received")
 
 
                                 for k, vList := range request.httpRequest.Header {
@@ -66,11 +68,9 @@ func main() {
                                 // "Double clutching" splits the transaction across 2 requests, providing the server with
                                 // a random channel for the second request, and connecting that to the original client
                                 if doubleClutch == "true" {
-                                        log.Println("doubleclutch")
                                         // TODO: keep generating until we're sure we have an unused channel. Extremely
                                         // unlikely but you never know.
                                         randomChannelId := genRandomChannelId()
-                                        log.Println(randomChannelId)
                                         w.Header().Add("Patchbay-Doubleclutch-Channel", randomChannelId)
                                         curlCmd := fmt.Sprintf("curl localhost:9001%s?server=true -d \"YOLO\"\n", randomChannelId)
                                         w.Header().Add("Patchbay-Doubleclutch-Curl-Cmd", curlCmd)
@@ -100,15 +100,17 @@ func main() {
                         }
                 } else {
 
+                        log.Println("client connection")
+
                         responseChan := make(chan PatchedReponse)
                         request := PatchedRequest{httpRequest: r, responseChan: responseChan}
 
                         select {
                         case channel <- request:
-                                log.Println("request sent")
 
                                 response := <-responseChan
 
+                                var status int
                                 for k, vList := range response.serverRequest.Header {
                                         if strings.HasPrefix(k, ResponsePrefix) {
                                                 // strip the prefix
@@ -116,8 +118,24 @@ func main() {
                                                 for _, v := range vList {
                                                         w.Header().Add(headerName, v)
                                                 }
+                                        } else if strings.HasPrefix(k, "Patchbay-Status") {
+                                                var err error
+                                                status, err = strconv.Atoi(vList[0])
+                                                if err != nil {
+                                                        log.Fatal(err)
+                                                }
                                         }
                                 }
+
+                                if status != 0 {
+                                        w.WriteHeader(status)
+                                }
+
+                                go func() {
+                                        <-r.Context().Done()
+                                        fmt.Println("cancello")
+                                        response.serverRequest.Body.Close()
+                                }()
 
                                 io.Copy(w, response.serverRequest.Body)
                                 close(response.doneSignal)
