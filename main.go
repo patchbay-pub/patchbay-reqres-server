@@ -5,9 +5,8 @@ import (
         "log"
         "net/http"
         "io"
+        "io/ioutil"
         "sync"
-        "math/rand"
-        "time"
         "strings"
         "strconv"
 )
@@ -29,7 +28,6 @@ type PatchedReponse struct {
 func main() {
 
         log.Println("Starting up")
-        rand.Seed(time.Now().Unix())
 
 	channels := make(map[string]chan PatchedRequest)
 	mutex := &sync.Mutex{}
@@ -52,6 +50,30 @@ func main() {
 
                         log.Println("responder connection")
 
+                        switchChannel := query.Get("switch") == "true"
+
+                        // not all HTTP clients can read the response headers before sending the request body.
+                        // switching splits the transaction across 2 requests, providing the responder 
+                        // with a random channel for the second request, and connecting that to the original
+                        // requester. These are referred to as "double clutch" requests. 
+                        var switchChannelIdStr string
+                        if switchChannel {
+                                switchChannelId, err := ioutil.ReadAll(r.Body)
+                                if err != nil {
+                                        log.Fatal(err)
+                                }
+                                switchChannelIdStr = string(switchChannelId)
+
+                                if switchChannelIdStr == "" {
+                                        w.WriteHeader(400)
+                                        w.Write([]byte("No switching channel provided"))
+                                        return
+                                }
+
+                                switchChannelIdStr = "/" + switchChannelIdStr
+                        }
+
+
                         select {
                         case request := <-channel:
 
@@ -62,26 +84,18 @@ func main() {
                                         }
                                 }
 
-                                doubleClutch := query.Get("doubleclutch")
-
                                 // not all HTTP clients can read the response headers before sending the request body.
-                                // "Double clutching" splits the transaction across 2 requests, providing the responder 
+                                // switching splits the transaction across 2 requests, providing the responder 
                                 // with a random channel for the second request, and connecting that to the original
-                                // requester 
-                                if doubleClutch == "true" {
-                                        // TODO: keep generating until we're sure we have an unused channel. Extremely
-                                        // unlikely but you never know.
-                                        randomChannelId := genRandomChannelId()
-                                        w.Header().Add("Pb-Doubleclutch-Channel", randomChannelId)
-                                        curlCmd := fmt.Sprintf("curl localhost:9001%s?responder=true -d \"Hi there\"\n", randomChannelId)
-                                        w.Header().Add("Pb-Doubleclutch-Curl-Cmd", curlCmd)
+                                // requester. These are referred to as "double clutch" requests. 
+                                if switchChannel {
 
                                         io.Copy(w, request.httpRequest.Body)
 
                                         ch := make(chan PatchedRequest, 1)
 
                                         mutex.Lock()
-                                        channels[randomChannelId] = ch
+                                        channels[switchChannelIdStr] = ch
                                         mutex.Unlock()
 
                                         ch <- request
@@ -151,14 +165,4 @@ func main() {
         if err != nil {
                 log.Fatal(err)
         }
-}
-
-
-const channelChars string = "0123456789abcdefghijkmnpqrstuvwxyz";
-func genRandomChannelId() string {
-        channelId := ""
-        for i := 0; i < 32; i++ {
-                channelId += string(channelChars[rand.Intn(len(channelChars))])
-        }
-        return "/" + channelId
 }
