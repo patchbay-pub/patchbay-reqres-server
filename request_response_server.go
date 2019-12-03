@@ -56,6 +56,14 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
         channel := s.channels[r.URL.Path]
         s.mutex.Unlock()
 
+        mpmc := strings.HasPrefix(r.URL.Path, "/mpmc")
+
+        if mpmc {
+                if r.Method == "POST" {
+                        isResponder = true
+                }
+        }
+
         if isResponder {
 
                 log.Println("responder connection")
