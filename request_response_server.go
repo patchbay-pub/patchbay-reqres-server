@@ -17,6 +17,7 @@ const RequestPrefix = "Pb-Req-"
 const ResponsePrefix = "Pb-Res-"
 
 type PatchedRequest struct {
+        uri string
         httpRequest *http.Request
         responseChan chan PatchedReponse
 }
@@ -48,21 +49,25 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
         isResponder := query.Get("responder") == "true"
 
-        s.mutex.Lock()
-        _, ok := s.channels[r.URL.Path]
-        if !ok {
-                s.channels[r.URL.Path] = make(chan PatchedRequest)
-        }
-        channel := s.channels[r.URL.Path]
-        s.mutex.Unlock()
+        var channelId string
 
         mpmc := strings.HasPrefix(r.URL.Path, "/mpmc")
-
         if mpmc {
+                channelId = r.URL.Path
                 if r.Method == "POST" {
                         isResponder = true
                 }
+        } else {
+                channelId = "/" + strings.Split(r.URL.Path, "/")[1]
         }
+
+        s.mutex.Lock()
+        _, ok := s.channels[channelId]
+        if !ok {
+                s.channels[channelId] = make(chan PatchedRequest)
+        }
+        channel := s.channels[channelId]
+        s.mutex.Unlock()
 
         if isResponder {
 
@@ -95,6 +100,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 select {
                 case request := <-channel:
 
+                        w.Header().Add("Pb-Uri", request.uri)
 
                         for k, vList := range request.httpRequest.Header {
                                 for _, v := range vList {
@@ -115,6 +121,8 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                                 s.mutex.Lock()
                                 s.channels[switchChannelIdStr] = ch
                                 s.mutex.Unlock()
+
+                                fmt.Println("switched it to", switchChannelIdStr)
 
                                 ch <- request
                         } else {
@@ -141,7 +149,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 log.Println("requester connection")
 
                 responseChan := make(chan PatchedReponse)
-                request := PatchedRequest{httpRequest: r, responseChan: responseChan}
+                request := PatchedRequest{uri: r.URL.RequestURI(), httpRequest: r, responseChan: responseChan}
 
                 select {
                 case channel <- request:
