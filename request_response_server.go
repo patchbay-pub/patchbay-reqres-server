@@ -47,18 +47,48 @@ func NewRequestResponseServer() *RequestResponseServer {
 func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
         query := r.URL.Query()
 
-        isResponder := query.Get("responder") == "true"
 
         var channelId string
 
-        mpmc := strings.HasPrefix(r.URL.Path, "/mpmc")
-        if mpmc {
+        pathParts := strings.Split(r.URL.Path, "/")
+
+        fmt.Println(pathParts)
+        if len(pathParts) < 2 {
+                w.WriteHeader(400)
+                w.Write([]byte("Invalid channel. Must start with '/'"))
+                return
+        }
+
+        protocol := pathParts[1]
+
+        isResponder := false
+
+        // TODO: For API version 1.0, change to default root path to being an
+        // alias of /req/ instead of /mpmc/
+        if protocol == "res" {
+                isResponder = true
+
+                if len(pathParts) < 3 {
+                        w.WriteHeader(400)
+                        w.Write([]byte("Invalid responder channel. Must be of the form /res/<channel-id>"))
+                        return
+                }
+
+                channelId = pathParts[2]
+        } else if protocol == "req" {
+                if len(pathParts) < 3 {
+                        w.WriteHeader(400)
+                        w.Write([]byte("Invalid requester channel. Must be of the form /req/<channel-id>"))
+                        return
+                }
+
+                channelId = pathParts[2]
+        } else {
+                // default to /mpmc/
                 channelId = r.URL.Path
                 if r.Method == "POST" {
                         isResponder = true
                 }
-        } else {
-                channelId = "/" + strings.Split(r.URL.Path, "/")[1]
         }
 
         s.mutex.Lock()
