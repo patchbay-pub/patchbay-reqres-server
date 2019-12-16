@@ -13,8 +13,8 @@ import (
         "path"
 )
 
-const RequestPrefix = "Pb-Req-"
-const ResponsePrefix = "Pb-Res-"
+const RequestPrefix = "Pb-H-"
+const ResponsePrefix = "Pb-H-"
 
 type PatchedRequest struct {
         uri string
@@ -52,7 +52,6 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
         pathParts := strings.Split(r.URL.Path, "/")
 
-        fmt.Println(pathParts)
         if len(pathParts) < 2 {
                 w.WriteHeader(400)
                 w.Write([]byte("Invalid channel. Must start with '/'"))
