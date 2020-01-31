@@ -130,6 +130,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 case request := <-channel:
 
                         w.Header().Add("Pb-Uri", request.uri)
+                        w.Header().Add("Pb-Method", request.httpRequest.Method)
 
                         for k, vList := range request.httpRequest.Header {
                                 for _, v := range vList {
