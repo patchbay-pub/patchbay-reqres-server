@@ -102,23 +102,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
                 log.Println("responder connection")
 
-                // Need to set CORS headers for responders so that custom patchbay headers
-                // can get through
-                if r.Header.Get("Origin") != "" {
-                        w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
-                        w.Header().Set("Vary", "Origin")
-                } else {
-                        w.Header().Set("Access-Control-Allow-Origin", "*")
-                }
-		//w.Header().Set("Access-Control-Max-Age", "86400")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Expose-Headers", "*, Authorization")
-		//w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-
-                if r.Method == "OPTIONS" {
-                        w.WriteHeader(200)
-                        return
-                }
+                
 
                 switchChannel := query.Get("switch") == "true"
 
