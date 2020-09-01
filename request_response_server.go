@@ -17,7 +17,7 @@ const RequestPrefix = "Pb-H-"
 const ResponsePrefix = "Pb-H-"
 
 type PatchedRequest struct {
-        uri string
+        path string
         httpRequest *http.Request
         responseChan chan PatchedReponse
 }
@@ -62,8 +62,6 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
         isResponder := false
 
-        // TODO: For API version 1.0, change to default root path to being an
-        // alias of /req/ instead of /mpmc/
         if protocol == "res" {
                 isResponder = true
 
@@ -74,20 +72,14 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 }
 
                 channelId = pathParts[2]
-        } else if protocol == "req" {
-                if len(pathParts) < 3 {
+        } else {
+                if len(pathParts) < 2 {
                         w.WriteHeader(400)
-                        w.Write([]byte("Invalid requester channel. Must be of the form /req/<channel-id>"))
+                        w.Write([]byte("Invalid requester channel. Must be of the form /<channel-id>"))
                         return
                 }
 
-                channelId = pathParts[2]
-        } else {
-                // default to /mpmc/
-                channelId = r.URL.Path
-                if r.Method == "POST" {
-                        isResponder = true
-                }
+                channelId = pathParts[1]
         }
 
         s.mutex.Lock()
@@ -98,11 +90,29 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
         channel := s.channels[channelId]
         s.mutex.Unlock()
 
+        fmt.Println("channels", s.channels)
+
+        fmt.Println("channelId", channelId)
+
         if isResponder {
 
                 log.Println("responder connection")
 
-                
+                if r.Header.Get("Origin") != "" {
+                        w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+                        w.Header().Set("Vary", "Origin")
+                } else {
+                        w.Header().Set("Access-Control-Allow-Origin", "*")
+                }
+
+                w.Header().Set("Access-Control-Allow-Headers", "*")
+                w.Header().Set("Access-Control-Expose-Headers", "*, Authorization")
+                w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+                if r.Method == "OPTIONS" {
+                        w.WriteHeader(200)
+                        return
+                }
 
                 switchChannel := query.Get("switch") == "true"
 
@@ -124,14 +134,14 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                                 return
                         }
 
-                        switchChannelIdStr = "/" + switchChannelIdStr
+                        //switchChannelIdStr = "/" + switchChannelIdStr
                 }
 
 
                 select {
                 case request := <-channel:
 
-                        w.Header().Add("Pb-Uri", request.uri)
+                        w.Header().Add("Pb-Path", request.path)
                         w.Header().Add("Pb-Method", request.httpRequest.Method)
 
                         for k, vList := range request.httpRequest.Header {
@@ -150,6 +160,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
                                 ch := make(chan PatchedRequest, 1)
 
+                                fmt.Println("switchChannelIdStr", switchChannelIdStr)
                                 s.mutex.Lock()
                                 s.channels[switchChannelIdStr] = ch
                                 s.mutex.Unlock()
@@ -181,7 +192,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 log.Println("requester connection")
 
                 responseChan := make(chan PatchedReponse)
-                request := PatchedRequest{uri: r.URL.RequestURI(), httpRequest: r, responseChan: responseChan}
+                request := PatchedRequest{path: r.URL.RequestURI(), httpRequest: r, responseChan: responseChan}
 
                 select {
                 case channel <- request:
