@@ -192,7 +192,9 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 log.Println("requester connection")
 
                 responseChan := make(chan PatchedReponse)
-                request := PatchedRequest{path: r.URL.RequestURI(), httpRequest: r, responseChan: responseChan}
+                reqPath := r.URL.RequestURI()
+                path := reqPath[len("/" + channelId):]
+                request := PatchedRequest{path: path, httpRequest: r, responseChan: responseChan}
 
                 select {
                 case channel <- request:
