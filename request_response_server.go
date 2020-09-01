@@ -6,7 +6,6 @@ import (
         "net/http"
         "io"
         "io/ioutil"
-        "sync"
         "strings"
         "strconv"
         "mime"
@@ -29,17 +28,15 @@ type PatchedReponse struct {
 }
 
 type RequestResponseServer struct {
-	channels map[string]chan PatchedRequest
-        mutex *sync.Mutex
+        conduitManager *ConduitManager
 }
 
 
 func NewRequestResponseServer() *RequestResponseServer {
 
-	channels := make(map[string]chan PatchedRequest)
-	mutex := &sync.Mutex{}
+        conduitManager := NewConduitManager()
 
-        server := &RequestResponseServer{channels, mutex}
+        server := &RequestResponseServer{conduitManager}
 
         return server
 }
@@ -82,18 +79,6 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 channelId = pathParts[1]
         }
 
-        s.mutex.Lock()
-        _, ok := s.channels[channelId]
-        if !ok {
-                s.channels[channelId] = make(chan PatchedRequest)
-        }
-        channel := s.channels[channelId]
-        s.mutex.Unlock()
-
-        fmt.Println("channels", s.channels)
-
-        fmt.Println("channelId", channelId)
-
         if isResponder {
 
                 log.Println("responder connection")
@@ -114,12 +99,12 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                         return
                 }
 
-                switchChannel := query.Get("switch") == "true"
 
                 // not all HTTP clients can read the response headers before sending the request body.
                 // switching splits the transaction across 2 requests, providing the responder 
                 // with a random channel for the second request, and connecting that to the original
                 // requester. These are referred to as "double clutch" requests. 
+                switchChannel := query.Get("switch") == "true"
                 var switchChannelIdStr string
                 if switchChannel {
                         switchChannelId, err := ioutil.ReadAll(r.Body)
@@ -133,13 +118,12 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                                 w.Write([]byte("No switching channel provided"))
                                 return
                         }
-
-                        //switchChannelIdStr = "/" + switchChannelIdStr
                 }
 
 
-                select {
-                case request := <-channel:
+                success, request := s.conduitManager.Respond(channelId, r.Context())
+
+                if success {
 
                         w.Header().Add("Pb-Path", request.path)
                         w.Header().Add("Pb-Method", request.httpRequest.Method)
@@ -158,16 +142,12 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
                                 io.Copy(w, request.httpRequest.Body)
 
-                                ch := make(chan PatchedRequest, 1)
-
-                                fmt.Println("switchChannelIdStr", switchChannelIdStr)
-                                s.mutex.Lock()
-                                s.channels[switchChannelIdStr] = ch
-                                s.mutex.Unlock()
-
                                 fmt.Println("switched it to", switchChannelIdStr)
 
-                                ch <- request
+                                // TODO: This may be a race condition, but I don't think so. The problem would be if the
+                                // second request of the double-clutch came in before this goroutine runs. But in that
+                                // case it should just block so I think we're fine. But keep an eye on it.
+                                go s.conduitManager.Switch(switchChannelIdStr, request)
                         } else {
 
                                 doneSignal := make(chan struct{})
@@ -184,7 +164,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
 
                                 <-doneSignal
                         }
-                case <-r.Context().Done():
+                } else {
                         log.Println("responder canceled")
                 }
         } else {
@@ -196,8 +176,9 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 path := reqPath[len("/" + channelId):]
                 request := PatchedRequest{path: path, httpRequest: r, responseChan: responseChan}
 
-                select {
-                case channel <- request:
+                success := s.conduitManager.Request(channelId, request, r.Context())
+
+                if success {
 
                         response := <-responseChan
 
@@ -231,7 +212,7 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                         io.Copy(w, response.responderRequest.Body)
                         close(response.doneSignal)
 
-                case <-r.Context().Done():
+                } else {
                         log.Println("requester canceled before connection")
                 }
         }
