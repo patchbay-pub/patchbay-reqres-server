@@ -10,6 +10,7 @@ import (
         "strconv"
         "mime"
         "path"
+        "sync"
 )
 
 const RequestPrefix = "Pb-H-"
@@ -29,6 +30,8 @@ type PatchedReponse struct {
 
 type RequestResponseServer struct {
         conduitManager *ConduitManager
+        pulses map[string]chan struct{}
+        pulseMutex *sync.Mutex
 }
 
 
@@ -36,13 +39,38 @@ func NewRequestResponseServer() *RequestResponseServer {
 
         conduitManager := NewConduitManager()
 
-        server := &RequestResponseServer{conduitManager}
+        pulses := make(map[string]chan struct {})
+	pulseMutex := &sync.Mutex{}
+
+        server := &RequestResponseServer{conduitManager, pulses, pulseMutex}
 
         return server
 }
 
 func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
         query := r.URL.Query()
+
+        reqPath := r.URL.Path
+
+        pulse := query.Get("check-pulse") == "true"
+        if pulse {
+
+                fmt.Println("checking pulse", reqPath)
+                s.pulseMutex.Lock()
+                ch, ok := s.pulses[reqPath]
+                if !ok {
+                        ch = make(chan struct{})
+                        s.pulses[reqPath] = ch
+                }
+                s.pulseMutex.Unlock()
+
+                <-ch
+
+                w.WriteHeader(200)
+                w.Write([]byte("Da pulse"))
+
+                return
+        }
 
 
         var channelId string
@@ -121,6 +149,19 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 }
 
 
+                regPulse := query.Get("register-pulse") == "true"
+                var pulseChan chan struct{}
+                if regPulse {
+                        s.pulseMutex.Lock()
+                        var ok bool
+                        pulseChan, ok = s.pulses[reqPath]
+                        if !ok {
+                                pulseChan = make(chan struct{})
+                                s.pulses[reqPath] = pulseChan
+                        }
+                        s.pulseMutex.Unlock()
+                }
+
                 success, request := s.conduitManager.Respond(channelId, r.Context())
 
                 if success {
@@ -167,12 +208,20 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 } else {
                         log.Println("responder canceled")
                 }
+
+
+                if regPulse {
+                        close(pulseChan)
+                        s.pulseMutex.Lock()
+                        delete(s.pulses, reqPath)
+                        s.pulseMutex.Unlock()
+                }
+
         } else {
 
                 log.Println("requester connection")
 
                 responseChan := make(chan PatchedReponse)
-                reqPath := r.URL.RequestURI()
                 path := reqPath[len("/" + channelId):]
                 request := PatchedRequest{path: path, httpRequest: r, responseChan: responseChan}
 
