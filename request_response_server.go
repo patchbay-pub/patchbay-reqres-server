@@ -232,20 +232,31 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                         response := <-responseChan
 
                         var status int
-                        for k, vList := range response.responderRequest.Header {
-                                if strings.HasPrefix(k, ResponsePrefix) {
+
+                        handleParam := func(param string, vList []string) {
+                                k := strings.ToLower(param)
+
+                                if strings.HasPrefix(k, strings.ToLower(ResponsePrefix)) {
                                         // strip the prefix
                                         headerName := k[len(ResponsePrefix):]
                                         for _, v := range vList {
                                                 w.Header().Add(headerName, v)
                                         }
-                                } else if strings.HasPrefix(k, "Pb-Status") {
+                                } else if strings.HasPrefix(k, "pb-status") {
                                         var err error
                                         status, err = strconv.Atoi(vList[0])
                                         if err != nil {
                                                 log.Fatal(err)
                                         }
                                 }
+                        }
+
+                        for k, vList := range response.responderRequest.Header {
+                                handleParam(k, vList)
+                        }
+
+                        for k, vList := range response.responderRequest.URL.Query() {
+                                handleParam(k, vList)
                         }
 
                         if status != 0 {
