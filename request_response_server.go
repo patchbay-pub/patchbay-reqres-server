@@ -137,7 +137,9 @@ func (s *RequestResponseServer) Handle(w http.ResponseWriter, r *http.Request) {
                 if switchChannel {
                         switchChannelId, err := ioutil.ReadAll(r.Body)
                         if err != nil {
-                                log.Fatal("switch error", err)
+                                w.WriteHeader(400)
+                                w.Write([]byte("Switch request body canceled"))
+                                return
                         }
                         switchChannelIdStr = string(switchChannelId)
 
